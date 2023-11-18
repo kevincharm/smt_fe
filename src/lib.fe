@@ -1,0 +1,91 @@
+use std::buf::{MemoryBuffer, MemoryBufferReader, MemoryBufferWriter}
+use std::evm::{mstore, keccak256_mem}
+
+/// @notice Compute parent hash of 2 leaves if both nonzero, otherwise just
+///     returns the special empty value of 0
+/// @param left Left child
+/// @param right Right child
+fn hash(left: u256, right: u256) -> u256 {
+    if ((left != 0) or (right != 0)) {
+        let mut buf: MemoryBuffer = MemoryBuffer::new(
+            len: 64
+        )
+        let mut writer: MemoryBufferWriter = buf.writer()
+        writer.write(value: left)
+        writer.write(value: right)
+        return keccak256_mem(buf)
+    } else {
+        return 0
+    }
+}
+
+/// @notice Compute the root of an address SMT (with depth=160) using the
+///     provided leaf value & accompanying efficient proof.
+/// @param leaf Leaf value at the index
+/// @param index Index; in an address SMT, this is just the address interpreted
+///     as a number
+/// @param enables Which siblings in the path should be included in root
+///     computation
+/// @param siblings Array of non-empty siblings in the proof path
+pub fn compute_address_smt_root(
+    leaf: u256,
+    index: address,
+    enables: u256,
+    siblings: Array<u256, 160>
+) -> u256 {
+    // TODO: This should be a variable arg if we want to support keys other
+    // than just Ethereum addresses
+    let tree_depth: u16 = 160
+    // assert tree_depth != 160, "Invalid tree depth"
+    assert u256(index) < (2 ** tree_depth), "Index out of range"
+
+    let mut root: u256 = leaf
+    let mut s: u256 = 0
+    let mut sibling: u256 = 0
+    let mut i: u256 = 0
+    while i < 160 {
+        // Take the sibling as the next proof path element if bit is enabled,
+        // otherwise set it to the special zero value (0)
+        if ((enables >> i) & 1) == 1 {
+            sibling = siblings[s]
+            s += 1
+        } else {
+            sibling = 0
+        }
+        // Derive hash order of children from index
+        if ((u256(index) >> i) & 1) == 1 {
+            root = hash(left: sibling, right: root)
+        } else {
+            root = hash(left: root, right: sibling)
+        }
+        //////
+        i += 1
+    }
+
+    return root
+}
+
+#test
+fn test_compute_root_no_siblings() {
+    let bobs_address: address = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+    let mut siblings: Array<u256, 160> = [0; 160]
+    assert compute_address_smt_root(
+        leaf: 0xac1441bc1aef7657dbd8b6b1f6ffe961160c38de3fe96f65f61ad82402242e37,
+        index: bobs_address,
+        enables: 0,
+        siblings
+    ) == 0x06ec44fb34e525016d7b725e6534e1f288928d5a44ebb4b89db3c86592f2fc62
+}
+
+#test
+fn test_compute_root_with_sibling() {
+    let bobs_address: address = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8
+    let mut siblings: Array<u256, 160> = [0; 160]
+    siblings[0] = 0xac1441bc1aef7657dbd8b6b1f6ffe961160c38de3fe96f65f61ad82402242e37
+    assert compute_address_smt_root(
+        leaf: 0x1182c7683918e49d9f492e1c7f8695e37ce8c24fbc4a932211f297d0b6028410,
+        index: bobs_address,
+        enables: 1,
+        siblings
+    ) == 0x8f61fbdd23f14d7712994cfda1833e77f0350a43ef65edc6f136e52404b21759
+}
